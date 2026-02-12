@@ -1,0 +1,474 @@
+"""Trainer class for fine-tuning embedding models."""
+
+import json
+import os
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from transformers import CLIPModel, CLIPProcessor
+
+from .losses import ContrastiveLoss, InfoNCELoss
+
+
+@dataclass
+class TrainingConfig:
+    """Configuration for embedding model training."""
+    
+    # Model
+    base_model: str = "patrickjohncyh/fashion-clip"
+    freeze_vision_encoder: bool = False
+    freeze_text_encoder: bool = False
+    freeze_vision_layers: int = 0  # Freeze first N layers of vision encoder
+    freeze_text_layers: int = 0    # Freeze first N layers of text encoder
+    
+    # Training
+    batch_size: int = 32
+    num_epochs: int = 10
+    learning_rate: float = 1e-5
+    weight_decay: float = 0.01
+    warmup_ratio: float = 0.1
+    max_grad_norm: float = 1.0
+    
+    # Loss
+    loss_type: str = "contrastive"  # contrastive, infonce, triplet
+    temperature: float = 0.07
+    
+    # Data
+    num_workers: int = 4
+    pin_memory: bool = True
+    
+    # Checkpointing
+    output_dir: str = "checkpoints/embedding_model"
+    save_every_n_epochs: int = 1
+    save_best_only: bool = True
+    
+    # Logging
+    log_every_n_steps: int = 100
+    eval_every_n_steps: int = 500
+    
+    # Device
+    device: str = "auto"
+    mixed_precision: bool = True
+    
+    # Validation
+    val_split: float = 0.1
+    
+    def to_dict(self) -> Dict:
+        """Convert config to dictionary."""
+        return {
+            "base_model": self.base_model,
+            "freeze_vision_encoder": self.freeze_vision_encoder,
+            "freeze_text_encoder": self.freeze_text_encoder,
+            "freeze_vision_layers": self.freeze_vision_layers,
+            "freeze_text_layers": self.freeze_text_layers,
+            "batch_size": self.batch_size,
+            "num_epochs": self.num_epochs,
+            "learning_rate": self.learning_rate,
+            "weight_decay": self.weight_decay,
+            "warmup_ratio": self.warmup_ratio,
+            "max_grad_norm": self.max_grad_norm,
+            "loss_type": self.loss_type,
+            "temperature": self.temperature,
+            "output_dir": self.output_dir,
+            "mixed_precision": self.mixed_precision,
+            "val_split": self.val_split,
+        }
+
+
+class EmbeddingTrainer:
+    """
+    Trainer for fine-tuning CLIP-style embedding models.
+    
+    Supports:
+    - Contrastive learning with in-batch negatives
+    - Partial freezing of encoders
+    - Mixed precision training
+    - Learning rate scheduling with warmup
+    - Checkpointing and early stopping
+    """
+    
+    def __init__(
+        self,
+        config: TrainingConfig,
+        model: Optional[CLIPModel] = None,
+        processor: Optional[CLIPProcessor] = None,
+    ):
+        """
+        Initialize trainer.
+        
+        Args:
+            config: Training configuration
+            model: Optional pre-loaded model
+            processor: Optional pre-loaded processor
+        """
+        self.config = config
+        self.device = self._get_device()
+        
+        # Load model and processor
+        if model is None:
+            print(f"Loading model: {config.base_model}")
+            self.model = CLIPModel.from_pretrained(config.base_model)
+        else:
+            self.model = model
+        
+        if processor is None:
+            self.processor = CLIPProcessor.from_pretrained(config.base_model)
+        else:
+            self.processor = processor
+        
+        self.model = self.model.to(self.device)
+        
+        # Apply freezing
+        self._apply_freezing()
+        
+        # Setup loss
+        self.loss_fn = self._create_loss()
+        
+        # Training state
+        self.global_step = 0
+        self.best_val_loss = float('inf')
+        self.training_history: List[Dict] = []
+        
+        # Mixed precision
+        self.scaler = torch.cuda.amp.GradScaler() if config.mixed_precision and self.device == "cuda" else None
+    
+    def _get_device(self) -> str:
+        """Determine device to use."""
+        if self.config.device != "auto":
+            return self.config.device
+        
+        if torch.cuda.is_available():
+            return "cuda"
+        elif torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+    
+    def _apply_freezing(self) -> None:
+        """Apply freezing to model layers."""
+        if self.config.freeze_vision_encoder:
+            for param in self.model.vision_model.parameters():
+                param.requires_grad = False
+            print("Froze entire vision encoder")
+        elif self.config.freeze_vision_layers > 0:
+            # Freeze embeddings and first N layers
+            for param in self.model.vision_model.embeddings.parameters():
+                param.requires_grad = False
+            for i, layer in enumerate(self.model.vision_model.encoder.layers):
+                if i < self.config.freeze_vision_layers:
+                    for param in layer.parameters():
+                        param.requires_grad = False
+            print(f"Froze first {self.config.freeze_vision_layers} vision layers")
+        
+        if self.config.freeze_text_encoder:
+            for param in self.model.text_model.parameters():
+                param.requires_grad = False
+            print("Froze entire text encoder")
+        elif self.config.freeze_text_layers > 0:
+            for param in self.model.text_model.embeddings.parameters():
+                param.requires_grad = False
+            for i, layer in enumerate(self.model.text_model.encoder.layers):
+                if i < self.config.freeze_text_layers:
+                    for param in layer.parameters():
+                        param.requires_grad = False
+            print(f"Froze first {self.config.freeze_text_layers} text layers")
+        
+        # Count trainable parameters
+        trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in self.model.parameters())
+        print(f"Trainable parameters: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
+    
+    def _create_loss(self) -> nn.Module:
+        """Create loss function."""
+        if self.config.loss_type == "contrastive":
+            return ContrastiveLoss(temperature=self.config.temperature)
+        elif self.config.loss_type == "infonce":
+            return InfoNCELoss(temperature=self.config.temperature)
+        else:
+            raise ValueError(f"Unknown loss type: {self.config.loss_type}")
+    
+    def train(
+        self,
+        train_dataset,
+        val_dataset=None,
+        resume_from: Optional[str] = None,
+    ) -> Dict:
+        """
+        Train the model.
+        
+        Args:
+            train_dataset: Training dataset
+            val_dataset: Optional validation dataset
+            resume_from: Optional checkpoint path to resume from
+            
+        Returns:
+            Training results dictionary
+        """
+        # Create data loaders
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=self.config.batch_size,
+            shuffle=True,
+            num_workers=self.config.num_workers,
+            pin_memory=self.config.pin_memory,
+            drop_last=True,
+        )
+        
+        val_loader = None
+        if val_dataset is not None:
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=self.config.batch_size,
+                shuffle=False,
+                num_workers=self.config.num_workers,
+                pin_memory=self.config.pin_memory,
+            )
+        
+        # Setup optimizer
+        optimizer = AdamW(
+            filter(lambda p: p.requires_grad, self.model.parameters()),
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay,
+        )
+        
+        # Setup scheduler
+        total_steps = len(train_loader) * self.config.num_epochs
+        warmup_steps = int(total_steps * self.config.warmup_ratio)
+        
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=0.1,
+            end_factor=1.0,
+            total_iters=warmup_steps,
+        )
+        main_scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=total_steps - warmup_steps,
+            eta_min=self.config.learning_rate * 0.01,
+        )
+        scheduler = SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, main_scheduler],
+            milestones=[warmup_steps],
+        )
+        
+        # Resume from checkpoint
+        start_epoch = 0
+        if resume_from:
+            start_epoch = self._load_checkpoint(resume_from, optimizer, scheduler)
+        
+        # Create output directory
+        output_dir = Path(self.config.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save config
+        with open(output_dir / "config.json", "w") as f:
+            json.dump(self.config.to_dict(), f, indent=2)
+        
+        # Training loop
+        print(f"\nStarting training for {self.config.num_epochs} epochs")
+        print(f"Total steps: {total_steps}, Warmup steps: {warmup_steps}")
+        print(f"Device: {self.device}")
+        
+        for epoch in range(start_epoch, self.config.num_epochs):
+            train_loss = self._train_epoch(train_loader, optimizer, scheduler, epoch)
+            
+            # Validation
+            val_loss = None
+            if val_loader is not None:
+                val_loss = self._validate(val_loader)
+                print(f"Epoch {epoch+1}/{self.config.num_epochs} - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+                
+                # Save best model
+                if val_loss < self.best_val_loss:
+                    self.best_val_loss = val_loss
+                    self._save_checkpoint(output_dir / "best_model", optimizer, scheduler, epoch)
+            else:
+                print(f"Epoch {epoch+1}/{self.config.num_epochs} - Train Loss: {train_loss:.4f}")
+            
+            # Save checkpoint
+            if (epoch + 1) % self.config.save_every_n_epochs == 0:
+                self._save_checkpoint(output_dir / f"checkpoint_epoch_{epoch+1}", optimizer, scheduler, epoch)
+            
+            # Record history
+            self.training_history.append({
+                "epoch": epoch + 1,
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+                "learning_rate": scheduler.get_last_lr()[0],
+            })
+        
+        # Save final model
+        self._save_checkpoint(output_dir / "final_model", optimizer, scheduler, self.config.num_epochs - 1)
+        
+        # Save training history
+        with open(output_dir / "training_history.json", "w") as f:
+            json.dump(self.training_history, f, indent=2)
+        
+        print(f"\nTraining complete! Models saved to {output_dir}")
+        
+        return {
+            "final_train_loss": self.training_history[-1]["train_loss"],
+            "best_val_loss": self.best_val_loss if val_loader else None,
+            "total_steps": self.global_step,
+            "output_dir": str(output_dir),
+        }
+    
+    def _train_epoch(
+        self,
+        train_loader: DataLoader,
+        optimizer: torch.optim.Optimizer,
+        scheduler,
+        epoch: int,
+    ) -> float:
+        """Train for one epoch."""
+        self.model.train()
+        total_loss = 0.0
+        num_batches = 0
+        
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}")
+        
+        for batch in pbar:
+            # Move to device
+            pixel_values = batch["pixel_values"].to(self.device)
+            input_ids = batch["input_ids"].to(self.device)
+            attention_mask = batch["attention_mask"].to(self.device)
+            
+            # Forward pass
+            optimizer.zero_grad()
+            
+            if self.scaler is not None:
+                with torch.cuda.amp.autocast():
+                    image_embeds = self.model.get_image_features(pixel_values=pixel_values)
+                    text_embeds = self.model.get_text_features(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                    )
+                    loss = self.loss_fn(image_embeds, text_embeds)
+                
+                self.scaler.scale(loss).backward()
+                self.scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+                self.scaler.step(optimizer)
+                self.scaler.update()
+            else:
+                image_embeds = self.model.get_image_features(pixel_values=pixel_values)
+                text_embeds = self.model.get_text_features(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                )
+                loss = self.loss_fn(image_embeds, text_embeds)
+                
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+                optimizer.step()
+            
+            scheduler.step()
+            
+            # Update metrics
+            total_loss += loss.item()
+            num_batches += 1
+            self.global_step += 1
+            
+            # Update progress bar
+            pbar.set_postfix({
+                "loss": f"{loss.item():.4f}",
+                "lr": f"{scheduler.get_last_lr()[0]:.2e}",
+            })
+        
+        return total_loss / num_batches
+    
+    @torch.no_grad()
+    def _validate(self, val_loader: DataLoader) -> float:
+        """Validate the model."""
+        self.model.eval()
+        total_loss = 0.0
+        num_batches = 0
+        
+        for batch in tqdm(val_loader, desc="Validating"):
+            pixel_values = batch["pixel_values"].to(self.device)
+            input_ids = batch["input_ids"].to(self.device)
+            attention_mask = batch["attention_mask"].to(self.device)
+            
+            image_embeds = self.model.get_image_features(pixel_values=pixel_values)
+            text_embeds = self.model.get_text_features(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+            )
+            
+            loss = self.loss_fn(image_embeds, text_embeds)
+            total_loss += loss.item()
+            num_batches += 1
+        
+        return total_loss / num_batches
+    
+    def _save_checkpoint(
+        self,
+        path: Path,
+        optimizer: torch.optim.Optimizer,
+        scheduler,
+        epoch: int,
+    ) -> None:
+        """Save model checkpoint."""
+        path.mkdir(parents=True, exist_ok=True)
+        
+        # Save model
+        self.model.save_pretrained(path)
+        self.processor.save_pretrained(path)
+        
+        # Save training state
+        torch.save({
+            "epoch": epoch,
+            "global_step": self.global_step,
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "best_val_loss": self.best_val_loss,
+            "config": self.config.to_dict(),
+        }, path / "training_state.pt")
+        
+        print(f"Saved checkpoint to {path}")
+    
+    def _load_checkpoint(
+        self,
+        path: str,
+        optimizer: torch.optim.Optimizer,
+        scheduler,
+    ) -> int:
+        """Load checkpoint and return starting epoch."""
+        path = Path(path)
+        
+        # Load model
+        self.model = CLIPModel.from_pretrained(path).to(self.device)
+        self.processor = CLIPProcessor.from_pretrained(path)
+        
+        # Load training state
+        state = torch.load(path / "training_state.pt", map_location=self.device)
+        optimizer.load_state_dict(state["optimizer_state_dict"])
+        scheduler.load_state_dict(state["scheduler_state_dict"])
+        self.global_step = state["global_step"]
+        self.best_val_loss = state["best_val_loss"]
+        
+        print(f"Resumed from epoch {state['epoch'] + 1}")
+        return state["epoch"] + 1
+    
+    def get_embedder(self):
+        """
+        Get a FineTunedEmbedder instance from the trained model.
+        
+        Returns:
+            FineTunedEmbedder instance
+        """
+        from ..embeddings.finetuned import FineTunedEmbedder
+        return FineTunedEmbedder(
+            model=self.model,
+            processor=self.processor,
+            device=self.device,
+        )

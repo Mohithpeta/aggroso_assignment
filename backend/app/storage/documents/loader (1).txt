@@ -1,0 +1,208 @@
+"""Dataset loader for Myntra Fashion Dataset."""
+
+import json
+from pathlib import Path
+from typing import Dict, Iterator, List, Optional
+
+import pandas as pd
+
+from .schema import FashionItem
+
+
+class MyntraFashionLoader:
+    """
+    Loader for Myntra Fashion Dataset.
+    
+    Loads product data from styles.csv and optionally enriches
+    with detailed metadata from individual JSON files.
+    """
+
+    def __init__(
+        self,
+        data_dir: str,
+        load_json_metadata: bool = False,
+        validate_images: bool = True,
+    ):
+        """
+        Initialize loader.
+        
+        Args:
+            data_dir: Path to fashion-dataset directory
+            load_json_metadata: Whether to load detailed JSON files
+            validate_images: Whether to check image files exist
+        """
+        self.data_dir = Path(data_dir)
+        self.load_json_metadata = load_json_metadata
+        self.validate_images = validate_images
+        self._validate_data_dir()
+
+        # Load CSV data
+        self.styles_df = pd.read_csv(
+            self.data_dir / "styles.csv", on_bad_lines="skip"
+        )
+        
+        # Load images.csv if it exists
+        images_csv_path = self.data_dir / "images.csv"
+        if images_csv_path.exists():
+            self.images_df = pd.read_csv(images_csv_path)
+            # Create image URL lookup
+            self.image_urls = dict(
+                zip(self.images_df["filename"], self.images_df["link"])
+            )
+        else:
+            self.images_df = None
+            self.image_urls = {}
+
+    def _validate_data_dir(self) -> None:
+        """Validate that data directory has expected structure."""
+        required_files = ["styles.csv"]
+        required_dirs = ["images"]
+
+        for f in required_files:
+            if not (self.data_dir / f).exists():
+                raise ValueError(f"Missing required file: {f}")
+
+        for d in required_dirs:
+            if not (self.data_dir / d).exists():
+                raise ValueError(f"Missing required directory: {d}")
+
+    def load(self) -> List[FashionItem]:
+        """
+        Load all items from dataset.
+        
+        Returns:
+            List of FashionItem objects
+        """
+        items = []
+        for item in self.load_iter():
+            items.append(item)
+        return items
+
+    def load_iter(self) -> Iterator[FashionItem]:
+        """
+        Iterate over items (memory-efficient).
+        
+        Yields:
+            FashionItem objects one at a time
+        """
+        for _, row in self.styles_df.iterrows():
+            try:
+                item = self._parse_row(row)
+                if item is not None:
+                    yield item
+            except Exception as e:
+                # Log and skip problematic entries
+                print(f"Warning: Failed to parse item {row.get('id', 'unknown')}: {e}")
+                continue
+
+    def _parse_row(self, row: pd.Series) -> Optional[FashionItem]:
+        """Parse a single CSV row to FashionItem."""
+        item_id = str(row["id"])
+        image_filename = f"{item_id}.jpg"
+        image_path = self.data_dir / "images" / image_filename
+
+        # Validate image exists
+        if self.validate_images and not image_path.exists():
+            return None
+
+        # Get image URL if available
+        image_urls = {}
+        if image_filename in self.image_urls:
+            image_urls["original"] = self.image_urls[image_filename]
+
+        # Load extended metadata from JSON if requested
+        article_attributes = {}
+        brand = None
+        price = None
+        discounted_price = None
+        age_group = None
+        metadata = {}
+
+        if self.load_json_metadata:
+            json_data = self._load_json_metadata(item_id)
+            if json_data:
+                data = json_data.get("data", {})
+                brand = data.get("brandName")
+                price = data.get("price")
+                discounted_price = data.get("discountedPrice")
+                age_group = data.get("ageGroup")
+                article_attributes = data.get("articleAttributes", {})
+
+                # Extract image resolutions
+                style_images = data.get("styleImages", {})
+                default_images = style_images.get("default", {})
+                resolutions = default_images.get("resolutions", {})
+                image_urls.update(resolutions)
+
+                metadata = data
+
+        return FashionItem(
+            item_id=item_id,
+            image_path=str(image_path),
+            display_name=str(row["productDisplayName"]),
+            master_category=str(row["masterCategory"]),
+            sub_category=str(row["subCategory"]),
+            article_type=str(row["articleType"]),
+            gender=str(row["gender"]),
+            base_colour=str(row.get("baseColour", "unknown")),
+            season=str(row.get("season", "unknown")),
+            year=int(row.get("year", 0)) if pd.notna(row.get("year")) else 0,
+            usage=str(row.get("usage", "unknown")),
+            brand=brand,
+            price=price,
+            discounted_price=discounted_price,
+            age_group=age_group,
+            article_attributes=article_attributes,
+            image_urls=image_urls,
+            metadata=metadata,
+        )
+
+    def _load_json_metadata(self, item_id: str) -> Optional[Dict]:
+        """Load detailed metadata from JSON file."""
+        json_path = self.data_dir / "styles" / f"{item_id}.json"
+        if not json_path.exists():
+            return None
+
+        try:
+            with open(json_path, "r") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            return None
+
+    def get_by_id(self, item_id: str) -> Optional[FashionItem]:
+        """Get a single item by ID."""
+        # Remove prefix if present
+        if item_id.startswith("myntra_"):
+            item_id = item_id[7:]
+
+        row = self.styles_df[self.styles_df["id"] == int(item_id)]
+        if row.empty:
+            return None
+
+        return self._parse_row(row.iloc[0])
+
+    def get_statistics(self) -> Dict:
+        """Get dataset statistics."""
+        return {
+            "total_items": len(self.styles_df),
+            "master_categories": self.styles_df["masterCategory"]
+            .value_counts()
+            .to_dict(),
+            "sub_categories": self.styles_df["subCategory"].value_counts().to_dict(),
+            "genders": self.styles_df["gender"].value_counts().to_dict(),
+            "seasons": self.styles_df["season"].value_counts().to_dict(),
+            "usages": self.styles_df["usage"].value_counts().to_dict(),
+            "years": self.styles_df["year"].value_counts().to_dict(),
+            "top_colors": self.styles_df["baseColour"]
+            .value_counts()
+            .head(20)
+            .to_dict(),
+            "top_article_types": self.styles_df["articleType"]
+            .value_counts()
+            .head(20)
+            .to_dict(),
+        }
+
+    def __len__(self) -> int:
+        """Return total number of items."""
+        return len(self.styles_df)

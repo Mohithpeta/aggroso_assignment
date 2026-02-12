@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Private Knowledge Q&A</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --border: #e5e7eb;
+      --primary: #2563eb;
+      --muted: #6b7280;
+      --error: #dc2626;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: #111827;
+    }
+
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    header h1 {
+      font-size: 18px;
+      margin: 0;
+    }
+
+    header span {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    main {
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 16px;
+      display: grid;
+      grid-template-columns: 1fr 1.4fr;
+      gap: 24px;
+    }
+
+    .card {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 20px;
+      border: 1px solid var(--border);
+    }
+
+    h2 {
+      font-size: 15px;
+      margin: 0 0 12px 0;
+    }
+
+    .upload-box {
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 24px;
+      text-align: center;
+    }
+
+    .upload-box p {
+      margin: 8px 0;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    button {
+      margin-top: 12px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    ul {
+      padding-left: 18px;
+      margin: 0;
+      font-size: 14px;
+    }
+
+    li {
+      margin-bottom: 6px;
+    }
+
+    textarea {
+      width: 100%;
+      resize: none;
+      padding: 10px;
+      font-size: 14px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+
+    .answer {
+      margin-top: 12px;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+
+    .source {
+      margin-top: 8px;
+      padding: 10px;
+      border-radius: 6px;
+      background: #f3f4f6;
+      font-size: 13px;
+    }
+
+    .error {
+      color: var(--error);
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    footer {
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      margin: 32px 0;
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <h1>Private Knowledge Q&A</h1>
+  <span>Ask questions grounded in your documents</span>
+</header>
+
+<main>
+
+  <!-- LEFT -->
+  <div>
+    <div class="card">
+      <h2>Upload Document</h2>
+
+      <div class="upload-box">
+        <strong>Select a .txt file</strong>
+        <p>Only non-empty text files are supported</p>
+        <button id="uploadBtn">Browse Files</button>
+        <input id="fileInput" type="file" accept=".txt" />
+        <div class="error" id="uploadError"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h2>Indexed Documents</h2>
+      <ul id="docList">
+        <li>Loading documents…</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="card">
+    <h2>Ask a Question</h2>
+
+    <textarea
+      id="questionInput"
+      rows="3"
+      placeholder="Ask a question based on your uploaded documents..."
+    ></textarea>
+
+    <button id="askBtn">Ask</button>
+    <div class="error" id="questionError"></div>
+
+    <hr style="margin:16px 0;" />
+
+    <strong>Answer</strong>
+    <div class="answer" id="answerBox">
+      Upload a document to begin.
+    </div>
+
+    <div style="margin-top:12px;">
+      <strong>Sources</strong>
+      <div id="sourcesBox"></div>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  Answers are generated only from uploaded documents.
+</footer>
+
+<script>
+  const uploadBtn = document.getElementById("uploadBtn");
+  const fileInput = document.getElementById("fileInput");
+  const uploadError = document.getElementById("uploadError");
+
+  const docList = document.getElementById("docList");
+
+  const askBtn = document.getElementById("askBtn");
+  const questionInput = document.getElementById("questionInput");
+  const questionError = document.getElementById("questionError");
+
+  const answerBox = document.getElementById("answerBox");
+  const sourcesBox = document.getElementById("sourcesBox");
+
+  uploadBtn.onclick = () => fileInput.click();
+
+  async function refreshDocuments() {
+    docList.innerHTML = "<li>Loading documents…</li>";
+
+    try {
+      const res = await fetch("/documents");
+      if (!res.ok) throw new Error();
+
+      const data = await res.json();
+      docList.innerHTML = "";
+
+      if (!data.documents || data.documents.length === 0) {
+        docList.innerHTML = "<li>No documents uploaded yet.</li>";
+        return;
+      }
+
+      data.documents.forEach(name => {
+        const li = document.createElement("li");
+        li.textContent = name;
+        docList.appendChild(li);
+      });
+
+    } catch {
+      docList.innerHTML =
+        "<li style='color:#dc2626;'>Failed to load documents</li>";
+    }
+  }
+
+  fileInput.onchange = async () => {
+    uploadError.textContent = "";
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    if (!file.name.endsWith(".txt")) {
+      uploadError.textContent = "Only .txt files are allowed.";
+      fileInput.value = "";
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    answerBox.textContent = "Uploading document…";
+
+    try {
+      const res = await fetch("/upload", {
+        method: "POST",
+        body: formData
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Upload failed");
+      }
+
+      const text = await res.text();
+
+    let data;
+    try {
+    data = JSON.parse(text);
+    } catch {
+    throw new Error(text);  
+    }
+      answerBox.textContent =
+        `Uploaded ${data.filename} (${data.chunks_created} chunks indexed)`;
+
+      await refreshDocuments();
+
+    } catch (e) {
+      uploadError.textContent = e.message;
+      answerBox.textContent = "Upload failed.";
+    }
+
+    fileInput.value = "";
+  };
+
+  askBtn.onclick = async () => {
+    questionError.textContent = "";
+    sourcesBox.innerHTML = "";
+
+    const question = questionInput.value.trim();
+    if (!question) {
+      questionError.textContent = "Question cannot be empty.";
+      return;
+    }
+
+    answerBox.textContent = "Thinking…";
+
+    try {
+      const res = await fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Request failed");
+      }
+
+      const data = await res.json();
+      answerBox.textContent = data.answer;
+
+      if (!data.sources || data.sources.length === 0) {
+        sourcesBox.innerHTML = "<div>No sources found.</div>";
+        return;
+      }
+
+      data.sources.forEach(s => {
+        const div = document.createElement("div");
+        div.className = "source";
+        div.innerHTML =
+          `<strong>${s.document}</strong><br>${s.chunk}`;
+        sourcesBox.appendChild(div);
+      });
+
+    } catch (e) {
+      answerBox.textContent = "Error: " + e.message;
+    }
+  };
+
+  document.addEventListener("DOMContentLoaded", refreshDocuments);
+</script>
+
+</body>
+</html>
