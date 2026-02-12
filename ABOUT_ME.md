@@ -1,48 +1,114 @@
-MOHITH PETA
-Software Developer | FastAPI • React • MongoDB • AWS 
-mohithreddy2031@gmail.com | +91 9550093996 | Marepalle, Chittoor
-https://github.com/Mohithpeta
-www.linkedin.com/in/mohith-peta
-https://leetcode.com/u/user4648HD/
+# Mohith Peta
 
-Education
-B.Tech in CS&IT | Siddharth Institute of Engineering and Technology	Puttur
-Nov 2021 – Jun 2025 | CGPA: 9.31
-Higher Secondary (XII) | Sri Chaitanya Junior College	Tirupati  
-Jul 2019 – Apr 2021 | Percentage: 97.9%
-Secondary School (X) | Ravindra Bharathi School	Tirupati  
-Jun 2018 – Mar 2019 | GPA: 10.0
-   Experience
-DeepVital Pvt. Ltd | Software Intern	Chennai, Tamil Nadu | August 2024 - September 2025
-•	Developed secure backend APIs with FastAPI and OAuth2-based role-based access.
-•	Deployed a video streaming pipeline using AWS S3 + CloudFront, reducing load time by ~40%.
-•	Designed MongoDB schemas using Mongoose, enabling personalized content retrieval.
-•	Collaborated with frontend and UI/UX teams to integrate with React + Tailwind.
-Skills
+**Software Developer**  
+FastAPI • React • MongoDB • AWS
 
-Programming Languages:	Python 
-Frameworks: 	FastAPI, React, Tailwind CSS
-Cloud: 	AWS (S3, CloudFront, Amplify), GCP Tools / Platforms:	Git, GitHub, VS Code, Figma, Postman Databases:	MongoDB (Atlas, Compass), SQL
-Problem Solving: 	150+ LeetCode problems solved
+📍 Marepalle, Chittoor, India  
+📧 mohithreddy2031@gmail.com  
+📞 +91 9550093996  
 
-Projects / Open-Source
-Automated Text Summarizer | Link	Js, HTML CSS, Python, Flask, MySQL Role: Backend Developer
-•	Developed backend using Flask to handle API integration, text segmentation, and summary generation.
-•	Preprocessed transcript data for keyword extraction, topic segmentation, and multilingual support.
-•	Designed relational schemas in MySQL for user and transcript data management.
-•	Worked closely with frontend team to integrate APIs and optimize user experience.
+🔗 **Links**  
+- GitHub: https://github.com/Mohithpeta  
+- LinkedIn: https://www.linkedin.com/in/mohith-peta  
+- LeetCode: https://leetcode.com/u/user4648HD/
 
-Postpartum Health Platform | Link	React.js, TypeScript, Python, FastAPI, MongoDB, AWS S3, CloudFront, Amplify, OAuth2
-Role: Software Intern
-•	Built secure backend APIs using FastAPI and MongoDB with role-based access (OAuth2).
-•	Integrated video streaming with optimized delivery using AWS S3 and CloudFront.
-•	Implemented personalized content filtering and retrieval based on user roles (mothers/doctors).
-•	Collaborated with UI/UX designers for seamless integration with React and Tailwind CSS.
-•	Deployed backend via Render and frontend via AWS Amplify for production-grade hosting.
+---
 
-Certifications
-•	Certified Frontend Developer specializing in React. - HackerRank
-•	Java Full Stack-I - Q-Spiders 
-  Honors & Awards
-•	Recipient of the Technical Excellence Award at Siddharth Quest, Siddharth Institute.
-•	Won First prize in College Chess Tournament
+## Education
+
+### B.Tech in Computer Science & Information Technology  
+**Siddharth Institute of Engineering and Technology**, Puttur  
+*Nov 2021 – Jun 2025*  
+**CGPA:** 9.31
+
+### Higher Secondary (XII)  
+**Sri Chaitanya Junior College**, Tirupati  
+*Jul 2019 – Apr 2021*  
+**Percentage:** 97.9%
+
+### Secondary School (X)  
+**Ravindra Bharathi School**, Tirupati  
+*Jun 2018 – Mar 2019*  
+**GPA:** 10.0
+
+---
+
+## Experience
+
+### Software Intern  
+**DeepVital Pvt. Ltd**, Chennai, Tamil Nadu  
+*August 2024 – September 2025*
+
+- Developed secure backend APIs using **FastAPI** with **OAuth2-based role-based access control**.
+- Deployed a **video streaming pipeline** using **AWS S3 + CloudFront**, reducing load times by approximately **40%**.
+- Designed and optimized **MongoDB schemas** (using Mongoose-style modeling) to enable personalized content retrieval.
+- Collaborated closely with frontend and UI/UX teams to integrate APIs with **React** and **Tailwind CSS**.
+
+---
+
+## Skills
+
+### Programming Languages
+- Python
+
+### Frameworks & Libraries
+- FastAPI  
+- React  
+- Tailwind CSS
+
+### Cloud & Platforms
+- AWS (S3, CloudFront, Amplify)  
+- GCP (basic tools)
+
+### Tools
+- Git  
+- GitHub  
+- VS Code  
+- Figma  
+- Postman
+
+### Databases
+- MongoDB (Atlas, Compass)  
+- SQL (MySQL)
+
+### Problem Solving
+- Solved **150+ LeetCode problems**
+
+---
+
+## Projects
+
+### Automated Text Summarizer  
+**Tech Stack:** JavaScript, HTML, CSS, Python, Flask, MySQL  
+**Role:** Backend Developer  
+
+- Built backend APIs using **Flask** for text ingestion, segmentation, and summary generation.
+- Implemented preprocessing pipelines for **keyword extraction**, **topic segmentation**, and **multilingual support**.
+- Designed **relational schemas** in MySQL for managing users and transcript data.
+- Worked closely with frontend developers to integrate APIs and improve overall user experience.
+
+---
+
+### Postpartum Health Platform  
+**Tech Stack:** React.js, TypeScript, Python, FastAPI, MongoDB, AWS S3, CloudFront, Amplify, OAuth2  
+**Role:** Software Intern  
+
+- Built secure backend APIs using **FastAPI** and **MongoDB** with **OAuth2-based role separation** (mothers/doctors).
+- Integrated optimized **video streaming** using **AWS S3 + CloudFront**.
+- Implemented **personalized content filtering and retrieval** based on user roles.
+- Collaborated with UI/UX designers to ensure smooth integration with **React** and **Tailwind CSS**.
+- Deployed backend via **Render** and frontend via **AWS Amplify** for production use.
+
+---
+
+## Certifications
+
+- **Certified Frontend Developer (React)** – HackerRank  
+- **Java Full Stack – I** – Q-Spiders
+
+---
+
+## Honors & Awards
+
+- Recipient of the **Technical Excellence Award** at *Siddharth Quest*, Siddharth Institute.
+- **First Prize** winner in the **College Chess Tournament**.
